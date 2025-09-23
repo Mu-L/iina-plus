@@ -220,6 +220,10 @@ class MainViewController: NSViewController {
 		}
     }
     
+    @IBAction func openPreferences(_ sender: NSButton) {
+        WindowManger.shared.showSettings()
+    }
+    
     // MARK: - Danmaku
     
     let iinaProxyAF = Alamofire.Session()

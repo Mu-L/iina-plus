@@ -47,7 +47,8 @@ struct PluginSheetView: View {
                     Spacer(minLength: 15)
                     if stepValue == 0 {
                         Button {
-                            stepValue += 1
+                            defaultsWrite(.systemEnable, boolValue: true)
+                            initPluginStates()
                         } label: {
                             LocalizedText("OSx-Ln-aqZ.title", tableName: .preferences)
                         }
@@ -59,7 +60,15 @@ struct PluginSheetView: View {
                     Spacer(minLength: 15)
                     if stepValue == 1 {
                         Button {
-                            stepValue += 1
+                            do {
+                                let plugins = try IINAApp.listPlugins()
+                                IINAApp.uninstallPlugins(plugins)
+                                try IINAApp.installPlugin()
+                            } catch let error {
+                                Log(error)
+                            }
+                            
+                            initPluginStates()
                         } label: {
 //                            LocalizedText("cgt-Fm-5UC.title", tableName: .preferences)
                             Text(installPluginTitle)
@@ -72,7 +81,9 @@ struct PluginSheetView: View {
                     Spacer(minLength: 15)
                     if stepValue == 2 {
                         Button {
-                            stepValue += 1
+                            defaultsWrite(.pluginEnable, boolValue: true)
+                            defaultsWrite(.parseEnable, stringValue: "1")
+                            initPluginStates()
                         } label: {
                             LocalizedText("VgB-qp-s9y.title", tableName: .preferences)
                         }

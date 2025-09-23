@@ -182,6 +182,10 @@ struct GeneralPrefsView: View {
         .sheet(isPresented: $pluginSheet) {
             PluginSheetView(pluginSheet: $pluginSheet)
         }
+        .onChange(of: pluginSheet) { new in
+            guard new == false else { return }
+            initPluginInfo()
+        }
         .onAppear {
             currentPlayer = Preferences.shared.livePlayer
             initPluginInfo()

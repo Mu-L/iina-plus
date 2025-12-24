@@ -185,7 +185,7 @@ actor VideoDecoder {
 			} else {
 				let id = json.id
 				let html = try await douyu.getDouyuHtml("https://www.douyu.com/\(id)")
-				let urls = try await douyu.getDouyuUrl(id, rate: rate, jsContext: html.jsContext)
+				let urls = try await douyu.getDouyuUrl(id, rate: rate)
 				let url = urls.first {
 					$0.1.rate == rate
 				}?.1.url

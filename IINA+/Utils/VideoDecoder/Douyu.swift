@@ -8,7 +8,6 @@
 
 import Cocoa
 import Alamofire
-import JavaScriptCore
 import Marshal
 import CryptoSwift
 
@@ -25,9 +24,9 @@ actor Douyu: SupportSiteProtocol {
 		guard let rid = Int(html.roomId) else {
 			throw VideoGetError.douyuNotFoundRoomId
 		}
-		let jsContext = html.jsContext
+        
 		let info = try await douyuBetard(rid)
-		let urls = try await getDouyuUrl(rid, jsContext: jsContext)
+		let urls = try await getDouyuUrl(rid)
 		
 		var yougetJson = YouGetJSON(rawUrl: url)
 		yougetJson.id = rid
@@ -39,57 +38,59 @@ actor Douyu: SupportSiteProtocol {
 	}
 	
     
-    func getDouyuHtml(_ url: String) async throws -> (roomId: String, roomIds: [String], isLiving: Bool, pageId: String, jsContext: JSContext) {
+    func getDouyuHtml(_ url: String) async throws -> (roomId: String, roomIds: [String], isLiving: Bool, pageId: String) {
         
 		let text = try await AF.request(url).serializingString().value
 		
-		let showStatus = text.subString(from: "$ROOM.show_status =", to: ";") == "1"
-		let roomId = text.subString(from: "$ROOM.room_id =", to: ";").replacingOccurrences(of: " ", with: "")
-		
-		guard roomId != "",
-			  let jsContext = self.douyuJSContext(text) else {
-			throw VideoGetError.douyuNotFoundRoomId
-		}
-		
-		var roomIds = [String]()
-		var pageId = ""
-		let roomIdsStr = text.subString(from: "window.room_ids=[", to: "],")
-		
-		if roomIdsStr != "" {
-			roomIds = roomIdsStr.replacingOccurrences(of: "\"", with: "").split(separator: ",").map(String.init)
-			pageId = text.subString(from: "\"pageId\":", to: ",")
-		}
-
-		return (roomId, roomIds, showStatus, pageId, jsContext)
-    }
-    
-    func douyuJSContext(_ text: String) -> JSContext? {
-        var text = text
-        
-        let start = #"<script type="text/javascript">"#
-        let end = #"</script>"#
-        
-        var scriptTexts = [String]()
-        
-        while text.contains(start) {
-            let js = text.subString(from: start, to: end)
-            scriptTexts.append(js)
-            text = text.subString(from: start)
-        }
-        
-        guard let context = JSContext(),
-              let cryptoPath = Bundle.main.path(forResource: "crypto-js", ofType: "js"),
-              let cryptoData = FileManager.default.contents(atPath: cryptoPath),
-              let cryptoJS = String(data: cryptoData, encoding: .utf8)?.subString(from: #"}(this, function () {"#, to: #"return CryptoJS;"#),
-              let signJS = scriptTexts.first(where: { $0.contains("ub98484234") })
-        else {
+        func extractRoomInfoJSON(from input: String) -> String? {
+            guard let roomInfoRange = input.range(of: "\\\"roomInfo\\\"") else {
+                return nil
+            }
+            
+            let suffix = input[roomInfoRange.upperBound...]
+            guard let openBraceIndex = suffix.firstIndex(of: "{") else {
+                return nil
+            }
+            
+            let searchRange = input[openBraceIndex...]
+            var braceCount = 0
+            var foundEnd = false
+            var endIndex = openBraceIndex
+            
+            for index in searchRange.indices {
+                let char = searchRange[index]
+                if char == "{" {
+                    braceCount += 1
+                } else if char == "}" {
+                    braceCount -= 1
+                    if braceCount == 0 {
+                        endIndex = index
+                        foundEnd = true
+                        break
+                    }
+                }
+            }
+            
+            if foundEnd {
+                let result = input[openBraceIndex...endIndex]
+                return String(result)
+            }
+            
             return nil
         }
-        context.name = "DouYin Sign"
-        context.evaluateScript(cryptoJS)
-        context.evaluateScript(signJS)
         
-        return context
+        var jsonText = extractRoomInfoJSON(from: text)
+        
+        jsonText = jsonText?.replacingOccurrences(of: "\\\"", with: "\"")
+        jsonText = jsonText?.replacingOccurrences(of: "\\\"", with: "\"")
+        
+        guard let jsonData = jsonText?.data(using: .utf8) else { throw VideoGetError.douyuNotFoundRoomId }
+        
+        let json: JSONObject = try JSONParser.JSONObjectWithData(jsonData)
+        let roomId: Int = try json.value(for: "room.room_id")
+        let isLiving: Bool = try json.value(for: "room.show_status") == 1
+        
+		return ("\(roomId)", [], isLiving, "")
     }
     
     func douyuBetard(_ rid: Int) async throws -> DouyuInfo {
@@ -126,7 +127,7 @@ actor Douyu: SupportSiteProtocol {
 		return try await AF.request(url).serializingDecodable(RoomOnlineStatus.self).value.data
     }
     
-    func getDouyuUrl(_ roomID: Int, rate: Int = 0, jsContext: JSContext) async throws -> [(String, Stream)] {
+    func getDouyuUrl(_ roomID: Int, rate: Int = 0) async throws -> [(String, Stream)] {
         let time = Int(Date().timeIntervalSince1970)
         let didStr: String = {
             let time = UInt32(NSDate().timeIntervalSinceReferenceDate)
@@ -135,26 +136,27 @@ actor Douyu: SupportSiteProtocol {
             return random.md5()
         }()
         
+        let enc = try await getEncryption(didStr)
         
-        guard let sign = jsContext.evaluateScript("ub98484234(\(roomID), '\(didStr)', \(time))").toString(),
-              let v = jsContext.evaluateScript("vdwdae325w_64we").toString()
-        else {
-            throw VideoGetError.douyuSignError
-        }
         
-        let pars = ["v": v,
-                    "did": didStr,
-                    "tt": "\(time)",
-                    "sign": sign.subString(from: "sign="),
-                    "cdn": "ali-h5",
-                    "rate": "\(rate)",
-                    "ver": "Douyu_221111905",
-                    "iar": "0",
-                    "ive": "0"]
+        let auth = enc.auth("\(roomID)", ts: time)
         
-		let url = "https://www.douyu.com/lapi/live/getH5Play/\(roomID)"
+        let pars = ["enc_data": enc.encData,
+                     "tt": "\(time)",
+                     "did": didStr,
+                     "auth": auth,
+                     "cdn": "",
+                     "rate": "\(rate)",
+                     "hevc": "1",
+                     "fa": "0",
+                     "ive": "0"]
+        
+        
+		let url = "https://www.douyu.com/lapi/live/getH5PlayV1/\(roomID)"
 		let data = try await AF.request(url, method: .post, parameters: pars).serializingData().value
+        
 		let json: JSONObject = try JSONParser.JSONObjectWithData(data)
+        
 		var play = try DouyuH5Play(object: json)
 		play = try await douyuCDNs(play)
 		
@@ -172,6 +174,19 @@ actor Douyu: SupportSiteProtocol {
 			}
 			return (rate.name, s)
 		}
+    }
+    
+    func getEncryption(_ did: String) async throws -> DouyuEncryption {
+        let url = "https://www.douyu.com/wgapi/livenc/liveweb/websec/getEncryption?did=\(did)"
+        let data = try await AF.request(url).serializingData().value
+        let json: JSONObject = try JSONParser.JSONObjectWithData(data)
+        
+        let error: Int = try json.value(for: "error")
+        guard error == 0 else {
+            throw VideoGetError.douyuSignError
+        }
+        
+        return try DouyuEncryption(object: json)
     }
     
     func douyuCDNs(_ info: DouyuH5Play) async throws -> DouyuH5Play {
@@ -258,6 +273,36 @@ struct DouyuInfo: Unmarshaling, LiveInfo {
 //        isLiving = try object.value(for: "room.show_status") == 1 && object.value(for: "room.videoLoop") != 0
         
         cover = try object.value(for: "room.room_pic")
+    }
+}
+
+struct DouyuEncryption: Unmarshaling {
+    let key: String
+    let randStr: String
+    let encTime: Int
+    let expireAt: Int
+    let encData: String
+    let isSpecial: Int
+    
+    init(object: MarshaledObject) throws {
+        key = try object.value(for: "data.key")
+        randStr = try object.value(for: "data.rand_str")
+        encTime = try object.value(for: "data.enc_time")
+        expireAt = try object.value(for: "data.expire_at")
+        encData = try object.value(for: "data.enc_data")
+        isSpecial = try object.value(for: "data.is_special")
+    }
+    
+    func auth(_ rid: String, ts: Int) -> String {
+        var u = randStr
+        
+        for _ in 0..<encTime {
+            u = (u + key).md5()
+        }
+        
+        let o = (isSpecial == 1) ? "" : "\(rid)\(ts)"
+        
+        return (u + key + o).md5()
     }
 }
 

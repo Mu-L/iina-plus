@@ -73,6 +73,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             for window in sender.windows {
                 if window.windowController is MainWindowController {
                     window.makeKeyAndOrderFront(self)
+                    window.collectionBehavior = .moveToActiveSpace
                 }
             }
         }

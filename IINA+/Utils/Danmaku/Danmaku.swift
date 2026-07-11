@@ -177,6 +177,7 @@ class Danmaku: NSObject {
 			}
 			douyinDM?.start(self.url)
 			socketClosed = false
+			retryCount = 0
 			startHeartbeat()
 		case .qieTV:
 			let ws = WebSocketClient()
@@ -395,6 +396,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 			{"uid":0,"token":"","roomId":"online://\(rid)","deviceId":"\(UUID().uuidString)","platform":"pc_web","unAccepts":[]}
 			"""
 			await sendMsg(qieTVPacket(op: 7, body: json.data(using: .utf8)!))
+			startHeartbeat()
 		default:
 			break
 		}

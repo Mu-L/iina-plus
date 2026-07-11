@@ -25,14 +25,14 @@ protocol DanmakuSubDelegate {
 
 @MainActor
 class Danmaku: NSObject {
-    var socket = WebSocketClient()
+    var socket: WebSocketClient? = nil
     var liveSite: SupportSites = .unsupported
     var url = ""
     var id = ""
     var delegate: DanmakuDelegate?
     
     private var heartBeatCount = 0
-    private var streamTask: Task<Void, Never>?
+    private var eventLoopTask: Task<Void, Never>?
     
     let biliLiveServer = URL(string: "wss://broadcastlv.chat.bilibili.com:443/sub")
 	var biliLiveIDs = (rid: "", token: "", uid: 1)
@@ -101,9 +101,10 @@ class Danmaku: NSObject {
     
     func stop() {
 		Log("Stop Danmaku")
-        streamTask?.cancel()
+        eventLoopTask?.cancel()
 		
-        Task { await socket.close() }
+        Task { await socket?.close() }
+        socket = nil
         stopHeartbeat()
         douyuSavedData = Data()
         heartBeatCount = 0
@@ -139,21 +140,14 @@ class Danmaku: NSObject {
 				biliLiveIDs.token = token
 				bililiveEmoticons = emoticons
 				biliLiveIDs.uid = uid
-				streamTask = await socket.connect(url: biliLiveServer!).runStream { [weak self] in
-					await self?.handleEvent($0)
-				}
+				let ws = WebSocketClient()
+				await runEventLoop(ws, url: biliLiveServer!)
         case .douyu:
             
             Log("Processes.shared.videoDecoder.getDouyuHtml")
 			
 			let info = try await videoDecoder.douyu.getDouyuHtml(url.absoluteString)
-			douyuRoomID = info.roomId
-			var request = URLRequest(url: self.douyuServer!)
-			request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0", forHTTPHeaderField: "User-Agent")
-			request.setValue("https://www.douyu.com", forHTTPHeaderField: "Origin")
-			streamTask = await socket.connect(request: request).runStream { [weak self] in
-				await self?.handleEvent($0)
-			}
+            await initDouYuSocket(info.roomId)
 			
         case .huya:
 			let str = try await AF.request(url.absoluteString).serializingString().value
@@ -168,36 +162,28 @@ class Danmaku: NSObject {
 					self.huyaAnchorUid = try roomInfo.value(for: "id")
 				}
 
-				streamTask = await socket.connect(url: self.huyaServer!).runStream { [weak self] in
-					await self?.handleEvent($0)
-				}
+				let ws = WebSocketClient()
+				await runEventLoop(ws, url: self.huyaServer!)
 
 		case .douyin:
 		douyinDM = .init()
-			douyinDM?.requestPrepared = { [weak self] request in
-				guard let self else { return }
+			douyinDM?.requestPrepared = { request in
 				let ws = WebSocketClient()
-				self.socket = ws
-				Task { @MainActor in
-					self.streamTask = await ws.connect(request: request).runStream { [weak self] event in
-						await self?.handleEvent(event)
-					}
-				}
+				Task { await self.runEventLoop(ws, request: request) }
 			}
 			douyinDM?.start(self.url)
 			socketClosed = false
 			startHeartbeat()
 		case .qieTV:
-			streamTask = await socket.connect(url: qieTVDMServer!).runStream { [weak self] in
-				await self?.handleEvent($0)
-			}
+			let ws = WebSocketClient()
+			await runEventLoop(ws, url: qieTVDMServer!)
         default:
             break
         }
     }
     
     func sendMsg(_ data: Data) async {
-        try? await socket.send(data: data)
+        try? await socket?.send(data: data)
     }
     
     private func sendDM(_ event: DanmakuEvent) {
@@ -207,6 +193,13 @@ class Danmaku: NSObject {
             return
         }
         delegate?.send(event, sender: self)
+    }
+    
+    private func initDouYuSocket(_ roomID: String) async {
+        Log("initDouYuSocket")
+        douyuRoomID = roomID
+		let ws = WebSocketClient()
+		await runEventLoop(ws, url: self.douyuServer!)
     }
     
     private func douyuSocketFormatter(_ str: String) -> Data {
@@ -232,16 +225,17 @@ class Danmaku: NSObject {
                     switch self.liveSite {
                     case .biliLive:
                         let data = self.pack(format: "NnnNN", values: [16, 16, 1, 2, 1]) as Data
-                        try await self.socket.send(data: data)
+                        try await self.socket?.send(data: data)
                     case .douyu:
                         let keeplive = "type@=mrkl/"
                         let data = self.douyuSocketFormatter(keeplive)
-                        try await self.socket.send(data: data)
+                        try await self.socket?.send(data: data)
                     case .huya:
                         let result = self.huyaJSContext?.evaluateScript("new Uint8Array(sendHeartBeat());")
                         let data = Data(result?.toArray() as? [UInt8] ?? [])
                         await self.sendMsg(data)
                     case .douyin:
+                        guard self.socket != nil else { return }
                         if self.socketClosed {
                             Log("Reconnect douyin dm")
                             self.stop()
@@ -250,12 +244,12 @@ class Danmaku: NSObject {
                         }
                         var pf = Douyin_PushFrame()
                         pf.payloadType = "hb"
-                        try await self.socket.send(data: pf.serializedData())
+                        try await self.socket?.send(data: pf.serializedData())
                     case .qieTV:
                         self.qieTVSeq += 1
-						try await self.socket.send(data: self.qieTVPacket(op: 2, body: Data()))
+						try await self.socket?.send(data: self.qieTVPacket(op: 2, body: Data()))
                     default:
-                        try await self.socket.sendPing()
+                        try await self.socket?.sendPing()
                     }
                     if liveSite != .douyin {
                         await self.incrementHeartbeat()
@@ -289,32 +283,48 @@ class Danmaku: NSObject {
     }
 
 
-	private func handleEvent(_ event: WebSocketClient.Event) async {
-		switch event {
-		case .didOpen:
-			await handleWebSocketOpen()
-		case .message(let data):
-			handleWebSocketMessage(data)
-		case .close(_, let reason, _):
-			Log("webSocketdidClose \(reason ?? "")")
-			switch liveSite {
-			case .biliLive:
-				stopHeartbeat()
-			case .douyin:
-				socketClosed = true
-			default:
-				break
+	@MainActor
+	private func runEventLoop(_ ws: WebSocketClient, url: URL) async {
+		var request = URLRequest(url: url)
+		request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+		await runEventLoop(ws, request: request)
+	}
+
+	@MainActor
+	private func runEventLoop(_ ws: WebSocketClient, request: URLRequest) async {
+		eventLoopTask?.cancel()
+		await socket?.close()
+		_ = await eventLoopTask?.result
+		socket = ws
+		eventLoopTask = Task { @MainActor in
+			for await event in await ws.open(request) {
+				switch event {
+				case .didOpen:
+					await handleWebSocketOpen()
+				case .message(let data):
+					handleWebSocketMessage(data)
+				case .close(_, let reason, _):
+					Log("webSocketdidClose \(reason ?? "")")
+					switch liveSite {
+					case .biliLive:
+						stopHeartbeat()
+					case .douyin:
+						socketClosed = true
+					default:
+						break
+					}
+					delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
+				case .error(let desc):
+					Log(desc)
+					switch liveSite {
+					case .douyin:
+						socketClosed = true
+					default:
+						break
+					}
+					delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
+				}
 			}
-			delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
-		case .error(let desc):
-			Log(desc)
-			switch liveSite {
-			case .douyin:
-				socketClosed = true
-			default:
-				break
-			}
-			delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
 		}
 	}
 	
@@ -487,7 +497,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 				} else if msg.starts(with: "type@=error") {
 					Log("douyu socket disconnected: \(msg)")
 					self.delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
-					Task { await socket.close() }
+					Task { await socket?.close() }
 				} else if msg.starts(with: "type@=loginres") {
 					Log("douyu content success")
 					self.delegate?.send(.init(method: .liveDMServer, text: ""), sender: self)
@@ -525,7 +535,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 					return t
 				}()
 				pf.payload = Data(payload)
-				Task { try? await socket.send(data: pf.serializedData()) }
+				Task { try? await socket?.send(data: pf.serializedData()) }
 			} catch let error {
 				Log("\(error)")
 			}

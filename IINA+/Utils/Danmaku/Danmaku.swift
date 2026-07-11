@@ -506,17 +506,17 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 				var r3 = PacketReader(data: d)
 				guard let raw = r3.readUInt32(endianness: .little) else { break }
 				let endIndex = Int(raw)
-				if d.count < endIndex+2 {
+				if d.count < endIndex + 4 {
 					douyuSavedData = d
 					d = Data()
 				} else {
-					guard endIndex+2 > 12, endIndex+2 < d.endIndex else {
+					guard endIndex + 4 > 12, endIndex + 4 <= d.endIndex else {
 						Log("endIndex out of range.")
 						return
 					}
-					let msg = d.subdata(in: 12..<endIndex+2)
+					let msg = d.subdata(in: 12..<endIndex + 4)
 					msgDatas.append(msg)
-					d = d.subdata(in: endIndex+2..<d.endIndex)
+					d = d.subdata(in: endIndex + 4..<d.endIndex)
 				}
 			}
 

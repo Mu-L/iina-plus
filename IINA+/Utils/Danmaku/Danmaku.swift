@@ -33,6 +33,8 @@ class Danmaku: NSObject {
     
     private var heartBeatCount = 0
     private var eventLoopTask: Task<Void, Never>?
+    private var retryCount = 0
+    private var isRetrying = false
     
     let biliLiveServer = URL(string: "wss://broadcastlv.chat.bilibili.com:443/sub")
 	var biliLiveIDs = (rid: "", token: "", uid: 1)
@@ -108,6 +110,8 @@ class Danmaku: NSObject {
         stopHeartbeat()
         douyuSavedData = Data()
         heartBeatCount = 0
+        retryCount = 0
+        isRetrying = false
         
 		Task {
 			douyinDM?.stop()
@@ -257,8 +261,7 @@ class Danmaku: NSObject {
                 } catch {
                     if (error as NSError).code == 2134 {
                         Log("Danmaku Error 2134, restart.")
-                        self.stop()
-                        await self.loadDM()
+                        self.retryConnection()
                     } else {
                         Log("Heartbeat error: \(error)")
                     }
@@ -272,14 +275,42 @@ class Danmaku: NSObject {
         heartBeatCount += 1
         if heartBeatCount > 5 {
             Log("HeartBeat no response, restart: \(url)")
-            stop()
-            await loadDM()
+            retryConnection()
         }
     }
 
     private func stopHeartbeat() {
         heartbeatTask?.cancel()
         heartbeatTask = nil
+    }
+
+    @MainActor
+    private func retryConnection() {
+        guard !isRetrying, retryCount < 10 else {
+            if retryCount >= 10 {
+                Log("Retry limit reached, giving up.")
+            }
+            return
+        }
+        isRetrying = true
+        retryCount += 1
+        let delay = min(Double(retryCount) * 2, 30)
+        Log("Connection lost, retrying (\(retryCount)/10) in \(Int(delay))s...")
+        
+        delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
+        
+        stopHeartbeat()
+        douyuSavedData = Data()
+        heartBeatCount = 0
+        
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            Log("Retry: reconnecting...")
+            await self.socket?.close()
+            self.socket = nil
+            await self.loadDM()
+        }
     }
 
 
@@ -295,6 +326,7 @@ class Danmaku: NSObject {
 		eventLoopTask?.cancel()
 		await socket?.close()
 		_ = await eventLoopTask?.result
+		isRetrying = false
 		socket = ws
 		eventLoopTask = Task { @MainActor in
 			for await event in await ws.open(request) {
@@ -313,7 +345,7 @@ class Danmaku: NSObject {
 					default:
 						break
 					}
-					delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
+					retryConnection()
 				case .error(let desc):
 					Log(desc)
 					switch liveSite {
@@ -322,7 +354,7 @@ class Danmaku: NSObject {
 					default:
 						break
 					}
-					delegate?.send(.init(method: .liveDMServer, text: "error"), sender: self)
+					retryConnection()
 				}
 			}
 		}
@@ -377,6 +409,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 				return
 			} else if data.count == 26 {
 				Log("bililive connect success")
+				retryCount = 0
 				self.delegate?.send(.init(method: .liveDMServer, text: ""), sender: self)
 				return
 			}
@@ -433,6 +466,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 
 			if str == "EWebSocketCommandType.EWSCmdS2C_RegisterGroupRsp" {
 				Log("huya connect success")
+				retryCount = 0
 				self.delegate?.send(.init(method: .liveDMServer, text: ""), sender: self)
 				return
 			} else if str.starts(with: "EWebSocketCommandType") {
@@ -471,7 +505,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 				guard let raw = r3.readUInt32(endianness: .little) else { break }
 				let endIndex = Int(raw)
 				if d.count < endIndex+2 {
-					douyuSavedData.append(douyuSavedData)
+					douyuSavedData = d
 					d = Data()
 				} else {
 					guard endIndex+2 > 12, endIndex+2 < d.endIndex else {
@@ -500,6 +534,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 					Task { await socket?.close() }
 				} else if msg.starts(with: "type@=loginres") {
 					Log("douyu content success")
+					retryCount = 0
 					self.delegate?.send(.init(method: .liveDMServer, text: ""), sender: self)
 				} else if msg == "type@=mrkl" {
 					heartBeatCount = 0
@@ -589,6 +624,7 @@ new Uint8Array(sendRegisterGroups(["live:\(id)", "chat:\(id)"]));
 			if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
 			   json["status"] as? Int == 0 {
 				Log("qieTV connect success")
+				retryCount = 0
 			}
 		case 2000:
 			if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],

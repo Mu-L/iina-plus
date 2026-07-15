@@ -10,6 +10,8 @@ on:
 jobs:
   release-osx:
     runs-on: macos-26
+    env:
+      PLUGIN_TAG: ""
     steps:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -51,18 +53,8 @@ jobs:
           npm install -g node-gyp 
           npm install -g create-dmg
 
-      - name: Prepare WebFiles Dependencies
-        run: |
-          cd IINA+/WebFiles/
-          npm install
-
-      - name: Download Plugin
-        uses: robinraju/release-downloader@v1.10
-        with:
-          repository: 'xjbeta/iina-plugin-danmaku'
-          tag: "0.1.17"
-          fileName: "iina-plugin-danmaku.iinaplgz"
-          out-file-path: "IINA+"
+      - name: Install Dependencies
+        run: ./InstallDeps.sh $PLUGIN_TAG
 
       - name: SPM
         run: xcodebuild -resolvePackageDependencies

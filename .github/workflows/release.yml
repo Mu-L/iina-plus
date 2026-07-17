@@ -54,7 +54,7 @@ jobs:
           npm install -g create-dmg
 
       - name: Install Dependencies
-        run: ./InstallDeps.sh $PLUGIN_TAG
+        run: bash ./InstallDeps.sh $PLUGIN_TAG
 
       - name: SPM
         run: xcodebuild -resolvePackageDependencies

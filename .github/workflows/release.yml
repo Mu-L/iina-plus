@@ -13,9 +13,6 @@ jobs:
     env:
       PLUGIN_TAG: ""
     steps:
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest
 
       - uses: actions/checkout@v5
 

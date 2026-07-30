@@ -54,6 +54,8 @@ jobs:
           npm install -g create-dmg
 
       - name: Install Dependencies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./InstallDeps.sh $PLUGIN_TAG
 
       - name: SPM

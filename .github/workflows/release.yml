@@ -9,13 +9,10 @@ on:
 
 jobs:
   release-osx:
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       PLUGIN_TAG: ""
     steps:
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest
 
       - uses: actions/checkout@v5
 
@@ -54,6 +51,8 @@ jobs:
           npm install -g create-dmg
 
       - name: Install Dependencies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash ./InstallDeps.sh $PLUGIN_TAG
 
       - name: SPM

@@ -9,7 +9,7 @@ on:
 
 jobs:
   release-osx:
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       PLUGIN_TAG: ""
     steps:

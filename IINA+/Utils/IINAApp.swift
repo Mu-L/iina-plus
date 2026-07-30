@@ -40,8 +40,8 @@ actor IINAApp {
 		}
 	}
 	
-	static let internalPluginVersion = "0.1.17"
-	static let internalPluginBuild = 14
+	static let internalPluginVersion = "VERSION"
+	static let internalPluginBuild = 0
 	
 	static let minIINABuild = 135
 	

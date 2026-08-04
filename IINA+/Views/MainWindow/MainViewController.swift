@@ -11,6 +11,7 @@ import CoreData
 import Alamofire
 import SDWebImage
 import WebKit
+import HuyaKit
 
 private extension NSPasteboard.PasteboardType {
     static let bookmarkRow = NSPasteboard.PasteboardType("bookmark.Row")
@@ -706,6 +707,14 @@ class MainViewController: NSViewController {
 		}
 		
 		let key = yougetJSON.videos[row].key
+		
+		// Huya prewarm: session keyed by yougetJSON.uuid (matches /huya/{uuid}.flv)
+		if yougetJSON.site == .huya, yougetJSON.id != -1 {
+			let rid = "\(yougetJSON.id)"
+			let quality = yougetJSON.streams[key]?.quality ?? 9999999
+			let rate = quality < 1_000_000 ? quality : nil
+			await HuyaProxyServer.shared.startPrewarm(uuid: yougetJSON.uuid, roomId: rid, rate: rate)
+		}
 		
 		yougetJSON = try await videoGet.prepareVideoUrl(yougetJSON, key)
 		try await videoGet.prepareDanmakuFile(yougetJSON: yougetJSON, id: uuid)

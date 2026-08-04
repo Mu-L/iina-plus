@@ -111,18 +111,17 @@ struct YouGetJSON: Unmarshaling, Codable {
 				"\(MPVOption.Network.referrer)=https://live.bilibili.com/"
 			])
 		case .huya:
-			args.append(contentsOf: [
-				"\(MPVOption.ProgramBehavior.ytdl)=no",
-				"\(MPVOption.Network.referrer)=https://www.huya.com/",
-				"\(MPVOption.Network.userAgent)=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15"
-			])
+			// Huya goes through the local HuyaProxy; no referrer/UA/reconnect needed
+			args.append("\(MPVOption.ProgramBehavior.ytdl)=no")
 		default:
 			args.append(contentsOf: ["\(MPVOption.ProgramBehavior.ytdl)=no"])
 		}
         
         // reconnect
         // https://github.com/mpv-player/mpv/issues/8779#issuecomment-1011066498
-        args.append("\(MPVOption.Miscellaneous.streamLavfO)=reconnect_streamed=yes")
+        if site != .huya {
+            args.append("\(MPVOption.Miscellaneous.streamLavfO)=reconnect_streamed=yes")
+        }
         
 		return args
     }
@@ -248,6 +247,8 @@ struct YouGetJSON: Unmarshaling, Codable {
 		case .bilibili where forDash, .bangumi where forDash:
 			return streams[key]?.dashUrl
         case .bilibili, .bangumi, .biliLive:
+            return streams[key]?.url
+        case .huya:
             return streams[key]?.url
         case .local:
             return streams.first?.value.url

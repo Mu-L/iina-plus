@@ -11,6 +11,7 @@
 import Foundation
 import NIO
 import NIOHTTP1
+import HuyaKit
 
 enum HTTPHandler {
 
@@ -47,6 +48,17 @@ enum HTTPHandler {
                     break
 
                 case .end:
+                    if currentURL.hasPrefix("/huya/") {
+                        // Long-lived stream; end when client disconnects (Connection: close)
+                        try await handleHuyaStreamRequest(
+                            url: currentURL,
+                            method: currentMethod,
+                            parameters: parameters,
+                            outbound: outbound,
+                            closeFuture: channel.channel.closeFuture
+                        )
+                        return
+                    }
                     try await handleRequest(
                         url: currentURL,
                         method: currentMethod,
@@ -54,6 +66,34 @@ enum HTTPHandler {
                         outbound: outbound
                     )
                 }
+            }
+        }
+    }
+
+    /// Race the stream loop against the client disconnect (channel.closeFuture,
+    /// event-driven, no polling): mpv close -> TCP EOF -> channel close
+    private static func handleHuyaStreamRequest(
+        url: String,
+        method: HTTPMethod,
+        parameters: [String: String],
+        outbound: NIOAsyncChannelOutboundWriter<HTTPPart<HTTPResponseHead, ByteBuffer>>,
+        closeFuture: EventLoopFuture<Void>
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await handleRequest(url: url, method: method, parameters: parameters, outbound: outbound)
+            }
+            group.addTask {
+                // client disconnect -> channel close -> closeFuture completes
+                try await closeFuture.get()
+                throw ClientDisconnectedError()
+            }
+            do {
+                try await group.next()
+                group.cancelAll()
+            } catch {
+                group.cancelAll()
+                throw error
             }
         }
     }
@@ -110,6 +150,18 @@ enum HTTPHandler {
             guard let path = Bundle.main.path(forResource: "test", ofType: "htm"),
                   let data = FileManager.default.contents(atPath: path) else { return }
             try await sendResponse(outbound: outbound, bodyData: data)
+
+        case (_, .GET) where url.hasPrefix("/huya/"):
+            // Huya .slice proxy (HuyaKit)
+            guard let roomId = URL(string: url)?.deletingPathExtension().lastPathComponent,
+                  !roomId.isEmpty else {
+                try await sendBadRequest(outbound: outbound)
+                return
+            }
+            try await HuyaProxyServer.shared.handleHuyaRequest(
+                roomId: roomId,
+                outbound: outbound
+            )
 
         case (_, .GET) where url.starts(with: "/video.mp4"):
             guard let path = Bundle.main.path(forResource: "empty", ofType: "m4a"),

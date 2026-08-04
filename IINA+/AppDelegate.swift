@@ -9,6 +9,7 @@
 import Cocoa
 import SDWebImage
 import Sparkle
+import HuyaKit
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -57,6 +58,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         initImageCache()
+        
+        // HuyaKit logs: error-only by default; set HuyaLogger.level = .debug when tracing
+        HuyaLogger.handler = { message, _ in
+            Log("[HuyaKit] \(message)")
+        }
         
         Processes.shared.httpServer.start()
 		

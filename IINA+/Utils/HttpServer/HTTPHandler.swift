@@ -176,9 +176,8 @@ enum HTTPHandler {
     // MARK: - Helpers
 
     private static func decode(_ url: String, key: String = "") async throws -> YouGetJSON? {
-        let videoDecoder = VideoDecoder()
-        var json = try await videoDecoder.decodeUrl(url)
-        json = try await videoDecoder.prepareVideoUrl(json, key)
+        var json = try await Processes.shared.videoDecoder.decodeUrl(url)
+        json = try await Processes.shared.videoDecoder.prepareVideoUrl(json, key)
         return json
     }
 

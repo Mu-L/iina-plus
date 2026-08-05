@@ -299,7 +299,8 @@ public actor HuyaProxyServer {
         outbound: NIOAsyncChannelOutboundWriter<HTTPPart<HTTPResponseHead, ByteBuffer>>
     ) async throws {
         let streamInfo: HuyaStream
-        var codecResult: (codecType: Int, displayName: String)
+        let codecType: Int
+        let displayName: String
         let firstTags: [HuyaFlvTag]
         let effectiveRoomId: String
 
@@ -310,7 +311,8 @@ public actor HuyaProxyServer {
                 let session = try await task.value
                 effectiveRoomId = session.roomId
                 streamInfo = session.streamInfo
-                codecResult = (session.codecType, session.displayName)
+                codecType = session.codecType
+                displayName = session.displayName
                 firstTags = session.firstTags
                 HuyaLogger.log("HuyaProxy:\(session.roomId) prewarm hit uuid=\(roomId.prefix(8))… "
                     + "\(session.displayName) (codecType=\(session.codecType))", level: .debug)
@@ -326,24 +328,23 @@ public actor HuyaProxyServer {
             effectiveRoomId = roomId
             do {
                 streamInfo = try await getStreamInfo(roomId: roomId)
-                codecResult = try await getCodecType(roomId: roomId)
+                let initialCodec = try await getCodecType(roomId: roomId)
                 // Download first slice + sniff the actual codec; re-download
                 // at the correct codecType if the marker disagrees
                 let expectedIsH265 = HuyaUrl.isH265CodecType(streamInfo.codecType)
                 let verified = try await getFirstTagsVerified(
                     roomId: roomId,
-                    codecType: codecResult.codecType,
+                    codecType: initialCodec.codecType,
                     expectedIsH265: expectedIsH265
                 )
                 firstTags = verified.tags
-                if verified.codecType != codecResult.codecType {
-                    codecResult = (verified.codecType, codecResult.displayName)
-                }
+                codecType = verified.codecType
+                displayName = initialCodec.displayName
             } catch {
                 try await Self.sendError(outbound: outbound, message: "room \(roomId) fetch failed: \(error)")
                 return
             }
-            HuyaLogger.log("HuyaProxy:\(roomId) \(codecResult.displayName) (codecType=\(codecResult.codecType))", level: .debug)
+            HuyaLogger.log("HuyaProxy:\(roomId) \(displayName) (codecType=\(codecType))", level: .debug)
         }
 
         var headers = NIOHTTP1.HTTPHeaders()
@@ -363,7 +364,7 @@ public actor HuyaProxyServer {
                 outbound: outbound,
                 roomId: effectiveRoomId,
                 streamInfo: streamInfo,
-                codecType: codecResult.codecType,
+                codecType: codecType,
                 firstTags: firstTags
             )
         }

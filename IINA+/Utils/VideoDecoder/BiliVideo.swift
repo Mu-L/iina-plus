@@ -161,8 +161,24 @@ actor BiliVideo: SupportSiteProtocol {
 		let initialStateJson: JSONObject = try JSONParser.JSONObjectWithData(initialStateData)
 		
 		yougetJson.title = try initialStateJson.value(for: "videoData.title")
-		yougetJson.id = try initialStateJson.value(for: "videoData.cid")
 		yougetJson.duration = try initialStateJson.value(for: "videoData.duration")
+
+		let pages: [JSONObject] = (try? initialStateJson.value(for: "videoData.pages")) ?? []
+		let requestPage: Int? = (try? initialStateJson.value(for: "p")) ?? (try? initialStateJson.value(for: "video.p"))
+		if pages.count > 1,
+		   let pageIndex = requestPage,
+		   pageIndex > 0,
+		   pageIndex <= pages.count {
+			let page = pages[pageIndex - 1]
+			if let cid: Int = try? page.value(for: "cid"), cid > 0 {
+				yougetJson.id = cid
+			}
+			if let part: String = try? page.value(for: "part"), part != "" {
+				yougetJson.title = part
+			}
+		} else {
+			yougetJson.id = try initialStateJson.value(for: "videoData.cid")
+		}
 
 		if let playInfo: BilibiliPlayInfo = try? playInfoJson.value(for: "data") {
 			yougetJson = playInfo.write(to: yougetJson)
@@ -185,7 +201,9 @@ actor BiliVideo: SupportSiteProtocol {
         
         let eps = try await getVideoList(url)
         let pages = eps.flattened.flatMap { $0.children.filter(\.isLeaf) }
-        guard let s = pages.first(where: { $0.bvid == bUrl.id }) ?? pages.first else { throw VideoGetError.notFountData }
+        guard let s = pages.first(where: { $0.bvid == bUrl.id && $0.index == bUrl.p })
+                ?? pages.first(where: { $0.bvid == bUrl.id })
+                ?? pages.first else { throw VideoGetError.notFountData }
         json.id = Int(s.id) ?? -1
         json.title = s.title
         json.duration = Int(s.duration)

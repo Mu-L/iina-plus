@@ -908,8 +908,8 @@ class MainViewController: NSViewController {
             case .offline:
                 f = "state == 0"
             case .other:
-                // Bangumi bilibili -99
-                f = "state == -1"
+                // Video -99, none -1
+                f = "state == -1 || state == -99"
             }
         }
         
@@ -930,6 +930,8 @@ class MainViewController: NSViewController {
         
         let format = [f, f2].filter {
             $0 != ""
+        }.map {
+            "(\($0))"
         }.joined(separator: " && ")
         
         guard format != "" else {

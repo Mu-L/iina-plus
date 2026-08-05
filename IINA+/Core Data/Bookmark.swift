@@ -40,7 +40,7 @@ public class Bookmark: NSManagedObject {
         if isLiveSite {
             state = (info.isLiving ? LiveState.living : LiveState.offline).raw
         } else if info.site == .bangumi || info.site == .bilibili {
-            state = LiveState.offline.raw
+            state = LiveState.video.raw
         } else {
             state = LiveState.none.raw
         }
